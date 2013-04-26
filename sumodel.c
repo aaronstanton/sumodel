@@ -16,8 +16,10 @@
 /*********************** self documentation **********************/
 char *sdoc[] = {
   " 	   							       ",
-  " SUFDACOUSTIC  Acoustic Finite difference modelling                 ",
-  "               (2nd order in time, 4th order in space)              ",
+  " SUMODEL   Modelling seismic data                ",
+  "               (FD (method=1) can be 2nd order in time, 2nd order in space, order=2)              ",
+  "               (FD (method=1) can be 2nd order in time, 4th order in space, order=4)              ",
+  "               (Pseudospectral  is activated using method=2                                       ",
   "                                                                    ",
   "           User provides:                                           ",
   "                                                                    ",
@@ -28,18 +30,18 @@ char *sdoc[] = {
  NULL};
 /* Credits:
  * Aaron Stanton
- * Trace header fields accessed: ns, dt, otrav.
+ * Trace header fields accessed: 
  * Last changes: April : 2013 
  */
 /**************** end self doc ***********************************/
 
-void fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
-void pspec_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx);
+void  fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
+void  pspec_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx);
 float fd_approx_deriv1_order1(float f1, float f3, float dx);
 float fd_approx_deriv2_order2(float f1, float f2, float f3, float d2x);
 float fd_approx_deriv2_order4(float f1, float f2, float f3, float f4, float f5, float d2x);
-void u_to_p(float **p, float **u2, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx);
-void ricker_wavelet(float *w, float f,float dt);
+void u_to_p(float **p, float **u2, float **v, float **rho, int nz, int nx, float dz, float dx);
+void  ricker_wavelet(float *w, float f,float dt);
 
 int main(int argc, char **argv)
 {

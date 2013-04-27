@@ -37,10 +37,10 @@ char *sdoc[] = {
 
 void  fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
 void  pspec_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx);
-float fd_approx_deriv1_order1(float f1, float f3, float dx);
+float fd_approx_deriv1_order2(float f1, float f3, float dx);
 float fd_approx_deriv2_order2(float f1, float f2, float f3, float d2x);
 float fd_approx_deriv2_order4(float f1, float f2, float f3, float f4, float f5, float d2x);
-void u_to_p(float **p, float **u2, float **v, float **rho, int nz, int nx, float dz, float dx);
+void  u_to_p(float **p, float **u1, float **u3, float **rho, int nz, int nx, float dt, float dz, float dx, float vp_water, float rho_water);
 void  ricker_wavelet(float *w, float f,float dt);
 
 int main(int argc, char **argv)
@@ -49,10 +49,10 @@ int main(int argc, char **argv)
   time_t start,finish;
   double elapsed_time;
   
-  int     order, method, nt, nz, nx, it, iz, ix, isz, isx, nsdur;
+  int     outcomp, order, method, nt, nz, nx, it, iz, ix, isz, isx, nsdur;
   int     ih, igz;
   float   dt, dz, dx, d2z, d2x, tmax, zmin, xmin, zmax, xmax, sz, sx, sf, sdur, gz;
-  float  rhs;
+  float  vp_water,rho_water;
   float   *w;
   float  **v;
   float **rho;
@@ -60,6 +60,7 @@ int main(int argc, char **argv)
   float **u1;
   float **u2;
   float **u3;
+  float **p;
   float **dout;
   float ***u;
   cwp_String out;
@@ -76,6 +77,7 @@ int main(int argc, char **argv)
   if (!getparint("verbose", &verbose))  verbose = 0;
   if (!getparint("method", &method))  method = 1; /* 1 is FD method, otherwise PSUEDOSPECTRAL method is used.*/
   if (!getparint("order", &order))  order = 4;
+  if (!getparint("outcomp", &outcomp))  outcomp = 0;
   if (!getparstring("out",&out)) err("out required."); 
   if (!getparfloat("dt", &dt))  dt = 0.001;
   if (!getparfloat("dz", &dz))  dz = 5;
@@ -90,6 +92,8 @@ int main(int argc, char **argv)
   if (!getparfloat("sf", &sf))  sf = 20;
   if (!getparfloat("sdur", &sdur))  sdur = 0.5;
   if (!getparfloat("gz", &gz))  gz = 10;
+  if (!getparfloat("vp_water", &vp_water))  vp_water = 1500;
+  if (!getparfloat("rho_water", &rho_water))  rho_water = 1000;
 
   d2z = dz*dz;
   d2x = dx*dx;
@@ -117,6 +121,7 @@ int main(int argc, char **argv)
   u3 = ealloc2float(nz,nx);
   dout = ealloc2float(nt,nx);
   u  = ealloc3float(nt,nz,nx);
+  p = ealloc2float(nz,nx);
 
   for (iz=0;iz<nz;iz++){  
     for (ix=0;ix<nx;ix++){
@@ -141,7 +146,9 @@ int main(int argc, char **argv)
 	else{
 	  pspec_step(u1,u2,u3,v,rho,rhoinv,nz,nx,dt,dz,dx);
 	}
-    
+    if (outcomp>0){
+      u_to_p(p,u1,u3,rho,nz,nx,dt,dz,dx,vp_water,rho_water);
+    }
     /* all boundaries fixed */
     /* set edges to zero */  
     for (iz=0;iz<nz;iz++){  
@@ -163,8 +170,13 @@ int main(int argc, char **argv)
         u[ix][iz][it]=u2[ix][iz];
       }
     }
-    for (ix=0;ix<nx;ix++){  
-      dout[ix][it] = u[ix][igz][it];
+    for (ix=0;ix<nx;ix++){
+      if (outcomp){
+      	dout[ix][it] = p[ix][igz];
+      }
+      else {
+        dout[ix][it] = u[ix][igz][it];	
+      }
     }
     it = it+1;    
   }    
@@ -176,6 +188,7 @@ int main(int argc, char **argv)
   free2float(u1);
   free2float(u2);
   free2float(u3);
+  free2float(p);
   free3float(u);
 
   /* ***********************************************************************
@@ -214,8 +227,8 @@ void fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float *
   if (order==2){
     for (iz=1;iz<nz-1;iz++){ 
       for (ix=1;ix<nx-1;ix++){
-		rhs = (rho[ix][iz]*v[ix][iz]*v[ix][iz])*(fd_approx_deriv1_order1(rhoinv[ix][iz-1],rhoinv[ix][iz+1],dz)*fd_approx_deriv1_order1(u2[ix][iz-1],u2[ix][iz+1],dz) +
-						 fd_approx_deriv1_order1(rhoinv[ix-1][iz],rhoinv[ix+1][iz],dx)*fd_approx_deriv1_order1(u2[ix-1][iz],u2[ix+1][iz],dx) + 
+		rhs = (rho[ix][iz]*v[ix][iz]*v[ix][iz])*(fd_approx_deriv1_order2(rhoinv[ix][iz-1],rhoinv[ix][iz+1],dz)*fd_approx_deriv1_order2(u2[ix][iz-1],u2[ix][iz+1],dz) +
+						 fd_approx_deriv1_order2(rhoinv[ix-1][iz],rhoinv[ix+1][iz],dx)*fd_approx_deriv1_order2(u2[ix-1][iz],u2[ix+1][iz],dx) + 
 						 (rhoinv[ix][iz])*fd_approx_deriv2_order2(u2[ix][iz-1],u2[ix][iz],u2[ix][iz+1],d2z) +
 						 (rhoinv[ix][iz])*fd_approx_deriv2_order2(u2[ix-1][iz],u2[ix][iz],u2[ix+1][iz],d2x));
 		u3[ix][iz] = (dt*dt)*rhs + 2*u2[ix][iz] - u1[ix][iz];
@@ -225,8 +238,8 @@ void fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float *
   else { 
     for (iz=2;iz<nz-2;iz++){  
       for (ix=2;ix<nx-2;ix++){  
-		rhs = (rho[ix][iz]*v[ix][iz]*v[ix][iz])*(fd_approx_deriv1_order1(rhoinv[ix][iz-1],rhoinv[ix][iz+1],dz)*fd_approx_deriv1_order1(u2[ix][iz-1],u2[ix][iz+1],dz) +
-						 fd_approx_deriv1_order1(rhoinv[ix-1][iz],rhoinv[ix+1][iz],dx)*fd_approx_deriv1_order1(u2[ix-1][iz],u2[ix+1][iz],dx) +
+		rhs = (rho[ix][iz]*v[ix][iz]*v[ix][iz])*(fd_approx_deriv1_order2(rhoinv[ix][iz-1],rhoinv[ix][iz+1],dz)*fd_approx_deriv1_order2(u2[ix][iz-1],u2[ix][iz+1],dz) +
+						 fd_approx_deriv1_order2(rhoinv[ix-1][iz],rhoinv[ix+1][iz],dx)*fd_approx_deriv1_order2(u2[ix-1][iz],u2[ix+1][iz],dx) +
 						 (rhoinv[ix][iz])*fd_approx_deriv2_order4(u2[ix][iz-2],u2[ix][iz-1],u2[ix][iz],u2[ix][iz+1],u2[ix][iz+2],d2z) +  
 						 (rhoinv[ix][iz])*fd_approx_deriv2_order4(u2[ix-2][iz],u2[ix-1][iz],u2[ix][iz],u2[ix+1][iz],u2[ix+2][iz],d2x));
 		u3[ix][iz] = (dt*dt)*rhs + 2*u2[ix][iz] - u1[ix][iz];
@@ -346,29 +359,37 @@ void pspec_step(float **u1, float **u2, float **u3, float **v, float **rho, floa
   return;
 }
 
-void u_to_p(float **p, float **u2, float **v, float **rho, int nz, int nx, float dz, float dx)
+void u_to_p(float **p, float **u1, float **u3, float **rho, int nz, int nx, float dt, float dz, float dx, float vp_water, float rho_water)
 {
   int iz, ix;
+  float **uv;
+  uv  = ealloc2float(nz,nx);
+  for (iz=0;iz<nz;iz++){ 
+    for (ix=0;ix<nx;ix++){
+      uv[ix][iz] = fd_approx_deriv1_order2(u1[ix][iz],u3[ix][iz],dt);
+    }
+  }
   for (iz=1;iz<nz-1;iz++){ 
     for (ix=1;ix<nx-1;ix++){
-	  p[ix][iz] = (-rho[ix][iz]*v[ix][iz]*v[ix][iz])*(fd_approx_deriv1_order1(u2[ix][iz-1],u2[ix][iz+1],dz) + 
-	  								                  fd_approx_deriv1_order1(u2[ix-1][iz],u2[ix+1][iz],dx));
+	  p[ix][iz] = -dt*vp_water*vp_water*rho_water*(fd_approx_deriv1_order2(uv[ix][iz-1],uv[ix][iz+1],dz) + 
+	  								               fd_approx_deriv1_order2(uv[ix-1][iz],uv[ix+1][iz],dx));
     }
   }
   for (iz=0;iz<nz;iz++){ 
 	  p[0][iz]  = 0;
-	  p[nx][iz] = 0;
+	  p[nx-1][iz] = 0;
   }
   for (ix=0;ix<nx;ix++){ 
 	  p[ix][0]  = 0;
-	  p[ix][nz] = 0;
+	  p[ix][nz-1] = 0;
   }
+  free2float(uv);
   return;
 }
 
-float fd_approx_deriv1_order1(float f1, float f3, float dx)
+float fd_approx_deriv1_order2(float f1, float f3, float dx)
 {
-  /* 1st order finite difference approximation to 1st derivative*/
+  /* 2nd order finite difference approximation to 1st derivative*/
   /* see www.en.wikipedia.org/wiki/Finite_difference_coefficients for description*/
   float dfdx;
   dfdx = (f3 - f1)/(2*dx);

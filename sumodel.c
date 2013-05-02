@@ -35,12 +35,26 @@ char *sdoc[] = {
  */
 /**************** end self doc ***********************************/
 
-void  fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
+#define	C1	1.125
+#define	C2	-0.04166667
+
+
+void fd_step_acoustic(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
+void  fd_step_elastic_iso(float **ux1, float **uy1, float **uz1, float **ux2, float **uy2, float **uz2, float **ux3, float **uy3, float **uz3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
 void  pspec_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx);
+
+void update_velocity(int nz, int nx, 
+                float **vx, float **vz, float **txx, float **tzz, float **txz,
+	            float **rhoinv, float dtx, float dtz);
+
+void update_stress_iso(int nz, int nx, 
+	                   float **vx, float **vz, float **txx, float **tzz, float **txz,
+	                   float **c11, float **c55, float dtx, float dtz);
+	                   	
 float fd_approx_deriv1_order2(float f1, float f3, float dx);
 float fd_approx_deriv2_order2(float f1, float f2, float f3, float d2x);
 float fd_approx_deriv2_order4(float f1, float f2, float f3, float f4, float f5, float d2x);
-void  u_to_p(float **p, float **u1, float **u3, float **rho, int nz, int nx, float dt, float dz, float dx, float vp_water, float rho_water);
+void v_to_p(float **p, float **vx, float **vy, float **vz, int nz, int nx, float dt, float dz, float dx, float vp_water, float rho_water);
 void  ricker_wavelet(float *w, float f,float dt);
 
 int main(int argc, char **argv)
@@ -52,22 +66,37 @@ int main(int argc, char **argv)
   int     outcomp, order, method, nt, nz, nx, it, iz, ix, isz, isx, nsdur;
   int     ih, igz;
   float   dt, dz, dx, d2z, d2x, tmax, zmin, xmin, zmax, xmax, sz, sx, sf, sdur, gz;
-  float  vp_water,rho_water;
+  float  vp_water,rho_water,dtx,dtz;
   float   *w;
-  float  **v;
+  float  **vp;
+  float  **vs;
   float **rho;
+  float **c11;
+  float **c55;
+  float **txx; 
+  float **tzz; 
+  float **txz;
   float **rhoinv;
-  float **u1;
-  float **u2;
-  float **u3;
+  float **vx1;
+  float **vy1;
+  float **vz1;
   float **p;
-  float **dout;
-  float ***u;
-  cwp_String out;
+  float **dxout;
+  float **dyout;
+  float **dzout;
+  float **dpout;
+  float ***vx;
+  float ***vy;
+  float ***vz;
+  cwp_String outz;
+  cwp_String outx;
+  cwp_String outp;
   segy tr;
-  FILE* fpout;   /* file pointer to output file */
+  FILE* fpoutz;   /* file pointer to output z file */
+  FILE* fpoutx;   /* file pointer to output x file */
+  FILE* fpoutp;   /* file pointer to output p file */
 
-  fprintf(stderr,"*******SUFDACOUSTIC*********\n");
+  fprintf(stderr,"*******SUMODEL*********\n");
   /* Initialize */
   initargs(argc, argv);
   requestdoc(1);
@@ -78,7 +107,9 @@ int main(int argc, char **argv)
   if (!getparint("method", &method))  method = 1; /* 1 is FD method, otherwise PSUEDOSPECTRAL method is used.*/
   if (!getparint("order", &order))  order = 4;
   if (!getparint("outcomp", &outcomp))  outcomp = 0;
-  if (!getparstring("out",&out)) err("out required."); 
+  if (!getparstring("outz",&outz)) err("outz required."); 
+  if (!getparstring("outx",&outx)) err("outx required."); 
+  if (!getparstring("outp",&outp)) err("outp required."); 
   if (!getparfloat("dt", &dt))  dt = 0.001;
   if (!getparfloat("dz", &dz))  dz = 5;
   if (!getparfloat("dx", &dx))  dx = 5;
@@ -87,11 +118,11 @@ int main(int argc, char **argv)
   if (!getparfloat("xmin", &xmin))  xmin = 0;
   if (!getparfloat("zmax", &zmax))  zmax = 1000;
   if (!getparfloat("xmax", &xmax))  xmax = 1000;
-  if (!getparfloat("sz", &sz))  sz = 500;
+  if (!getparfloat("sz", &sz))  sz = 200;
   if (!getparfloat("sx", &sx))  sx = 500;
   if (!getparfloat("sf", &sf))  sf = 20;
   if (!getparfloat("sdur", &sdur))  sdur = 0.5;
-  if (!getparfloat("gz", &gz))  gz = 10;
+  if (!getparfloat("gz", &gz))  gz = 100;
   if (!getparfloat("vp_water", &vp_water))  vp_water = 1500;
   if (!getparfloat("rho_water", &rho_water))  rho_water = 1000;
 
@@ -105,7 +136,8 @@ int main(int argc, char **argv)
   isx = (int) (sx - xmin)/dx;
   nsdur = (int) trunc(sdur/dt) + 1;
   igz = (int) (gz - zmin)/dz;
- 
+  dtx = dt/dx; 
+  dtz = dt/dz;
  
   w  = ealloc1float(nsdur);
   for (it=0;it<nsdur;it++){
@@ -113,103 +145,195 @@ int main(int argc, char **argv)
   }  
   ricker_wavelet(w, sf, dt);
 
-  v  = ealloc2float(nz,nx);
+  vp  = ealloc2float(nz,nx);
+  vs  = ealloc2float(nz,nx);
   rho= ealloc2float(nz,nx);
+  c11 = ealloc2float(nz,nx);
+  c55 = ealloc2float(nz,nx);
+  txx = ealloc2float(nz,nx);
+  tzz = ealloc2float(nz,nx);
+  txz = ealloc2float(nz,nx);
   rhoinv= ealloc2float(nz,nx);
-  u1 = ealloc2float(nz,nx);
-  u2 = ealloc2float(nz,nx);
-  u3 = ealloc2float(nz,nx);
-  dout = ealloc2float(nt,nx);
-  u  = ealloc3float(nt,nz,nx);
+  vx1 = ealloc2float(nz,nx);
+  vy1 = ealloc2float(nz,nx);
+  vz1 = ealloc2float(nz,nx);
+  dxout = ealloc2float(nt,nx);
+  dyout = ealloc2float(nt,nx);
+  dzout = ealloc2float(nt,nx);
+  dpout = ealloc2float(nt,nx);
+  vx  = ealloc3float(nt,nz,nx);
+  vy  = ealloc3float(nt,nz,nx);
+  vz  = ealloc3float(nt,nz,nx);
   p = ealloc2float(nz,nx);
 
   for (iz=0;iz<nz;iz++){  
     for (ix=0;ix<nx;ix++){
-      v[ix][iz]=1500; /* setting velocity constant to 1500m/s */  
+      vp[ix][iz]=1500; /* setting P velocity */  
+      vs[ix][iz]=0; /* setting S velocity */  
       rho[ix][iz]=1000; /* setting density constant to 1000kg/m^3 */
+      c11[ix][iz]=(rho[ix][iz]*vp[ix][iz]*vp[ix][iz] - rho[ix][iz]*vs[ix][iz]*vs[ix][iz]) + 2*rho[ix][iz]*vs[ix][iz]*vs[ix][iz]; /*  lambda + 2*mu  , where lambda = rho*vp^2- mu*/
+      c55[ix][iz]=rho[ix][iz]*vs[ix][iz]*vs[ix][iz]; /*  mu  , where mu = rho*vs^2*/
+      txx[ix][iz]=0; 
+      tzz[ix][iz]=0; 
+      txz[ix][iz]=0; 
       rhoinv[ix][iz]=1/rho[ix][iz]; 
-      u1[ix][iz]=0;
-      u2[ix][iz]=0;
-      u3[ix][iz]=0;
+      vx1[ix][iz]=0;
+      vy1[ix][iz]=0;
+      vz1[ix][iz]=0;
       for (it=0;it<nt;it++){  
-      	u[ix][iz][it]=0;
+      	vx[ix][iz][it]=0;
+      	vy[ix][iz][it]=0;
+      	vz[ix][iz][it]=0;
       }
     }
   }
-  
   it = 0;
+  fprintf(stderr,"\n");	
   while (it < nt){
-  		
-	if (method==1){ 
-	  fd_step(u1,u2,u3,v,rho,rhoinv,nz,nx,dt,dz,dx,d2z,d2x,order);
-	}
-	else{
-	  pspec_step(u1,u2,u3,v,rho,rhoinv,nz,nx,dt,dz,dx);
-	}
-    if (outcomp>0){
-      u_to_p(p,u1,u3,rho,nz,nx,dt,dz,dx,vp_water,rho_water);
-    }
-    /* all boundaries fixed */
-    /* set edges to zero */  
+  	fprintf(stderr,"\r%3.0f%% Complete.",(float) (it+1)/nt * 100);	
+  	
+  	if (it<nsdur){
+      vz1[isx][isz] = w[it];
+    } 
+
+	/* if (method==1){  */
+	  /*
+	  fd_step(ux1,uy1,uz1,ux2,uy2,uz2,ux3,uy3,uz3,v,rho,rhoinv,nz,nx,dt,dz,dx,d2z,d2x,order);
+	  fd_step_elastic_iso(ux1,uy1,uz1,ux2,uy2,uz2,ux3,uy3,uz3,v,rho,rhoinv,nz,nx,dt,dz,dx,d2z,d2x,order);
+      */
+      update_velocity(nz,nx,vx1,vz1,txx,tzz,txz,rhoinv,dtx,dtz);
+
+	/* } */
+	/* else{ */
+	/*
+	  pspec_step(ux1,uy1,uz1,ux2,uy2,uz2,ux3,uy3,uz3,v,rho,rhoinv,nz,nx,dt,dz,dx);
+	*/  
+	/* } */
+    /* set velocity boundary conditions */
     for (iz=0;iz<nz;iz++){  
-      u3[1][iz]    = 0; 
-      u3[nx-1][iz] = 0;
+      vx1[1][iz]    = 0; 
+      vy1[1][iz]    = 0; 
+      vz1[1][iz]    = 0; 
+      vx1[nx-1][iz] = 0;
+      vy1[nx-1][iz] = 0;
+      vz1[nx-1][iz] = 0;
     }
     for (ix=0;ix<nx;ix++){  
-      u3[ix][1]    = 0; 
-      u3[ix][nz-1] = 0;
+      vx1[ix][1]    = 0; 
+      vy1[ix][1]    = 0; 
+      vz1[ix][1]    = 0; 
+      vx1[ix][nz-1] = 0;
+      vy1[ix][nz-1] = 0;
+      vz1[ix][nz-1] = 0;
     }
    
-    if (it<nsdur){
-      u3[isx][isz] = w[it];
-    }  
     for (iz=0;iz<nz;iz++){  
       for (ix=0;ix<nx;ix++){  
-        u1[ix][iz]=u2[ix][iz];
-        u2[ix][iz]=u3[ix][iz];
-        u[ix][iz][it]=u2[ix][iz];
+        vx[ix][iz][it]=vx1[ix][iz];
+        vy[ix][iz][it]=vy1[ix][iz];
+        vz[ix][iz][it]=vz1[ix][iz];
       }
     }
+    
+    update_stress_iso(nz,nx,vx1,vz1,txx,tzz,txz,c11,c55,dtx,dtz);
+
+    /* if (outcomp>0){ */
+      v_to_p(p,vx1,vy1,vz1,nz,nx,dt,dz,dx,vp_water,rho_water);
+    /* } */
+
     for (ix=0;ix<nx;ix++){
-      if (outcomp){
-      	dout[ix][it] = p[ix][igz];
-      }
-      else {
-        dout[ix][it] = u[ix][igz][it];	
-      }
+      /* if (outcomp){ */
+      	dpout[ix][it] = p[ix][igz];
+      /* } */
+     /* else { */
+        dxout[ix][it] = vx[ix][igz][it];	
+        dyout[ix][it] = vy[ix][igz][it];	
+        dzout[ix][it] = vz[ix][igz][it];	
+     /* } */
     }
     it = it+1;    
   }    
+  fprintf(stderr,"\n");	
  
   free1float(w);
-  free2float(v);
+  free2float(vp);
+  free2float(vs);
   free2float(rho);
+  free2float(c11);
+  free2float(c55);
+  free2float(txx); 
+  free2float(tzz); 
+  free2float(txz);
   free2float(rhoinv);
-  free2float(u1);
-  free2float(u2);
-  free2float(u3);
+  free2float(vx1);
+  free2float(vy1);
+  free2float(vz1);
   free2float(p);
-  free3float(u);
+  free3float(vx);
+  free3float(vy);
+  free3float(vz);
 
   /* ***********************************************************************
-  outputting data
+  outputting z component
   *********************************************************************** */
-  fpout = efopen(out,"w");
+  fpoutz = efopen(outz,"w");
   for (ih=0;ih<nx;ih++){ 
     /* fprintf(stderr,"ih=%d\n",ih); */
-    memcpy((void *) tr.data,(const void *) dout[ih],nt*sizeof(float));
+    memcpy((void *) tr.data,(const void *) dzout[ih],nt*sizeof(float));
     tr.sx  = (int) sx;
     tr.gx  = (int) xmin + dx*ih;
     tr.ns = nt;
     tr.dt = NINT(dt*1000000.);
     tr.tracl = tr.tracr = ih + 1;
-    fputtr(fpout,&tr);
+    fputtr(fpoutz,&tr);
   }
-  fclose(fpout);
+  fclose(fpoutz);
   /* ***********************************************************************
-  end outputting data
+  end outputting z component
   *********************************************************************** */
-  free2float(dout);
+ 
+  /* ***********************************************************************
+  outputting x component
+  *********************************************************************** */
+  fpoutx = efopen(outx,"w");
+  for (ih=0;ih<nx;ih++){ 
+    /* fprintf(stderr,"ih=%d\n",ih); */
+    memcpy((void *) tr.data,(const void *) dxout[ih],nt*sizeof(float));
+    tr.sx  = (int) sx;
+    tr.gx  = (int) xmin + dx*ih;
+    tr.ns = nt;
+    tr.dt = NINT(dt*1000000.);
+    tr.tracl = tr.tracr = ih + 1;
+    fputtr(fpoutx,&tr);
+  }
+  fclose(fpoutx);
+  /* ***********************************************************************
+  end outputting x component
+  *********************************************************************** */
+
+  /* ***********************************************************************
+  outputting p component
+  *********************************************************************** */
+  fpoutp = efopen(outp,"w");
+  for (ih=0;ih<nx;ih++){ 
+    /* fprintf(stderr,"ih=%d\n",ih); */
+    memcpy((void *) tr.data,(const void *) dpout[ih],nt*sizeof(float));
+    tr.sx  = (int) sx;
+    tr.gx  = (int) xmin + dx*ih;
+    tr.ns = nt;
+    tr.dt = NINT(dt*1000000.);
+    tr.tracl = tr.tracr = ih + 1;
+    fputtr(fpoutp,&tr);
+  }
+  fclose(fpoutp);
+  /* ***********************************************************************
+  end outputting p component
+  *********************************************************************** */
+
+  free2float(dxout);
+  free2float(dyout);
+  free2float(dzout);
+  free2float(dpout);
   
   /******** end of program **********/
   finish=time(0);
@@ -219,7 +343,7 @@ int main(int argc, char **argv)
   return EXIT_SUCCESS;
 }
 
-void fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order)
+void fd_step_acoustic(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order)
 {
   int iz, ix;
   float rhs;
@@ -247,6 +371,45 @@ void fd_step(float **u1, float **u2, float **u3, float **v, float **rho, float *
     }  
   }
     
+  return;
+}
+
+void update_velocity(int nz, int nx, 
+                float **vx, float **vz, float **txx, float **tzz, float **txz,
+	            float **rhoinv, float dtx, float dtz)
+{
+  int iz,ix;
+  float dtxx,dtzz,dtxz,dtzx;
+  for (iz=2;iz<nz-2;iz++) {
+    for (ix=2;ix<nx-2;ix++) {
+	  dtxx = C1*(txx[ix][iz+1]-txx[ix][iz]) + C2*(txx[ix][iz+2]-txx[ix][iz-1]);
+	  dtxz = C1*(txz[ix+1][iz]-txz[ix][iz]) + C2*(txz[ix+2][iz]-txz[ix-1][iz]);
+	  vx[ix][iz] = vx[ix][iz] + ( dtx*dtxx + dtz*dtxz ) * rhoinv[ix][iz];
+	  dtzz = C1*(tzz[ix][iz]-tzz[ix-1][iz]) + C2*(tzz[ix+1][iz]-tzz[ix-2][iz]);
+	  dtzx = C1*(txz[ix][iz]-txz[ix][iz-1]) + C2*(txz[ix][iz+1]-txz[ix][iz-2]);
+	  vz[ix][iz] = vz[ix][iz] + ( dtx*dtzx + dtz*dtzz ) * rhoinv[ix][iz];
+	 }
+  }
+  return;
+}
+
+void update_stress_iso(int nz, int nx, 
+	                   float **vx, float **vz, float **txx, float **tzz, float **txz,
+	                   float **c11, float **c55, float dtx, float dtz)
+{
+  int iz,ix;
+  float dvxx,dvxz,dvzz,dvzx;
+  for (iz=2;iz<nz-2;iz++) {
+    for (ix=2;ix<nx-2;ix++) {
+	  dvzz = C1*(vz[ix+1][iz]-vz[ix][iz]) + C2*(vz[ix+2][iz]-vz[ix-1][iz]);
+	  dvxx = C1*(vx[ix][iz]-vx[ix][iz-1]) + C2*(vx[ix][iz+1]-vx[ix][iz-2]);
+	  txx[ix][iz] = txx[ix][iz] + c11[ix][iz]*dtx*dvxx + (c11[ix][iz]-2*c55[ix][iz])*dtz*dvzz;
+	  tzz[ix][iz] = tzz[ix][iz] + c11[ix][iz]*dtz*dvzz + (c11[ix][iz]-2*c55[ix][iz])*dtx*dvxx;
+	  dvzx = C1*(vz[ix][iz+1]-vz[ix][iz]) + C2*(vz[ix][iz+2]-vz[ix][iz-1]);
+	  dvxz = C1*(vx[ix][iz]-vx[ix-1][iz]) + C2*(vx[ix+1][iz]-vx[ix-2][iz]);
+	  txz[ix][iz] = txz[ix][iz] + c55[ix][iz]*(dtz*dvxz + dtx*dvzx);
+	 }
+  }
   return;
 }
 
@@ -359,20 +522,15 @@ void pspec_step(float **u1, float **u2, float **u3, float **v, float **rho, floa
   return;
 }
 
-void u_to_p(float **p, float **u1, float **u3, float **rho, int nz, int nx, float dt, float dz, float dx, float vp_water, float rho_water)
+void v_to_p(float **p, float **vx, float **vy, float **vz, int nz, int nx, float dt, float dz, float dx, float vp_water, float rho_water)
 {
   int iz, ix;
-  float **uv;
-  uv  = ealloc2float(nz,nx);
-  for (iz=0;iz<nz;iz++){ 
-    for (ix=0;ix<nx;ix++){
-      uv[ix][iz] = fd_approx_deriv1_order2(u1[ix][iz],u3[ix][iz],dt);
-    }
-  }
+
   for (iz=1;iz<nz-1;iz++){ 
     for (ix=1;ix<nx-1;ix++){
-	  p[ix][iz] = -dt*vp_water*vp_water*rho_water*(fd_approx_deriv1_order2(uv[ix][iz-1],uv[ix][iz+1],dz) + 
-	  								               fd_approx_deriv1_order2(uv[ix-1][iz],uv[ix+1][iz],dx));
+      /* here vy is left out since we are only considering the z-x plane (2d) */
+	  p[ix][iz] = -dt*vp_water*vp_water*rho_water*(fd_approx_deriv1_order2(vz[ix][iz-1],vz[ix][iz+1],dz) + 
+	  								               fd_approx_deriv1_order2(vx[ix-1][iz],vx[ix+1][iz],dx));
     }
   }
   for (iz=0;iz<nz;iz++){ 
@@ -383,7 +541,6 @@ void u_to_p(float **p, float **u1, float **u3, float **rho, int nz, int nx, floa
 	  p[ix][0]  = 0;
 	  p[ix][nz-1] = 0;
   }
-  free2float(uv);
   return;
 }
 
@@ -417,8 +574,7 @@ float fd_approx_deriv2_order4(float f1, float f2, float f3, float f4, float f5, 
 void ricker_wavelet(float *w, float f,float dt)
 {
   int iw, nw, nc;
-  float alpha, beta; 
-    
+  float alpha, beta;  
   nw = (int) 2*trunc((float) (2.2/f/dt)/2) + 1;
   nc = (int) trunc((float) nw/2);
  

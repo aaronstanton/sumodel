@@ -32,6 +32,16 @@ char *sdoc[] = {
  * Aaron Stanton
  * Trace header fields accessed: 
  * Last changes: April : 2013 
+ 
+ to be added:
+
+ PML
+ 
+ 3D, Y component
+ 
+ input models as files: rho and c's depending on isotropic, or some symmetry (HTI/VTI/TTI/ORTHO)
+ 
+ 
  */
 /**************** end self doc ***********************************/
 
@@ -40,7 +50,7 @@ char *sdoc[] = {
 
 
 void fd_step_acoustic(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
-void  fd_step_elastic_iso(float **ux1, float **uy1, float **uz1, float **ux2, float **uy2, float **uz2, float **ux3, float **uy3, float **uz3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
+void fd_step_elastic_iso(float **ux1, float **uy1, float **uz1, float **ux2, float **uy2, float **uz2, float **ux3, float **uy3, float **uz3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx, float d2z, float d2x, int order);
 void  pspec_step(float **u1, float **u2, float **u3, float **v, float **rho, float **rhoinv, int nz, int nx, float dt, float dz, float dx);
 
 void update_velocity(int nz, int nx, 
@@ -120,7 +130,7 @@ int main(int argc, char **argv)
   if (!getparfloat("xmax", &xmax))  xmax = 1000;
   if (!getparfloat("sz", &sz))  sz = 200;
   if (!getparfloat("sx", &sx))  sx = 500;
-  if (!getparfloat("sf", &sf))  sf = 20;
+  if (!getparfloat("sf", &sf))  sf = 30;
   if (!getparfloat("sdur", &sdur))  sdur = 0.5;
   if (!getparfloat("gz", &gz))  gz = 100;
   if (!getparfloat("vp_water", &vp_water))  vp_water = 1500;
